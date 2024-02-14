@@ -13,16 +13,6 @@
 
 #pragma intrinsic(strcpy)
 
-#pragma function(memset)
-void* __cdecl memset(void* dst, int val, size_t count) {
-    void* start = dst;
-    while (count--) {
-        *(char*)dst = (char)val;
-        dst = (char*)dst + 1;
-    }
-    return start;
-}
-
 static HICON g_hIcon = NULL;
 static HINSTANCE g_hInst = NULL;
 static HWND g_hDlg = NULL;
@@ -30,7 +20,6 @@ static HWND g_hTip1 = NULL;
 static char g_path[1024];
 static char g_tabs = 0;
 
-static const char* szTip1 = "Amount of shared stash tabs";
 static const BYTE stash_bytes[] = {
   0x55,0xAA,0x55,0xAA,0x00,0x00,0x00,0x00,0x61,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
   0x44,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
@@ -53,53 +42,35 @@ static BYTE* find_pattern(const BYTE* src_start, const BYTE* src_end, const BYTE
   return (BYTE*)src_end;
 }
 
-static HWND CreateToolTip(HWND hDlg, int ctrlID, const char* lpszText)
-{
+static HWND SetToolTip(HWND hDlg, int ctrlID, const char* lpszText, HWND* phWndTip) {
   HWND hWndCtrl, hWndTip;
   TTTOOLINFOA toolInfo;
 
   hWndCtrl = GetDlgItem(hDlg, ctrlID);
-  if (hWndCtrl) {
+  if (!hWndCtrl) return NULL;
+
+  __stosb(&toolInfo, 0, sizeof(TTTOOLINFOA));
+  toolInfo.cbSize = sizeof(TTTOOLINFOA);
+  toolInfo.hwnd = hDlg;
+  toolInfo.uId = (UINT_PTR)hWndCtrl;
+
+  if (!phWndTip || !*phWndTip) {
     hWndTip = CreateWindowExA(
       0, "tooltips_class32", NULL, WS_POPUP | TTS_ALWAYSTIP | TTS_NOANIMATE | TTS_NOFADE,
       CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hDlg, NULL, g_hInst, NULL
     );
-
-    if (hWndTip) {
-      memset(&toolInfo, 0, sizeof(TTTOOLINFOA));
-      toolInfo.cbSize = sizeof(TTTOOLINFOA);
-      toolInfo.hwnd = hDlg;
-      toolInfo.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
-      toolInfo.uId = (UINT_PTR)hWndCtrl;
-      toolInfo.lpszText = (char*)lpszText;
-      SendMessageA(hWndTip, TTM_ADDTOOL, 0, (LPARAM)&toolInfo);
-      return hWndTip;
-    }
-  }
-  return NULL;
-}
-
-static HWND SetToolTip(HWND hDlg, int ctrlID, HWND* phWndTip, const char* lpszText) {
-  HWND hWndCtrl;
-
-  if (*phWndTip) {
-    hWndCtrl = GetDlgItem(hDlg, ctrlID);
-    if (hWndCtrl) {
-      TTTOOLINFOA toolInfo;
-      char buf[1024];
-      memset(&toolInfo, 0, sizeof(TTTOOLINFOA));
-      toolInfo.cbSize = sizeof(TTTOOLINFOA);
-      toolInfo.hwnd = hDlg;
-      toolInfo.uId = (UINT_PTR)hWndCtrl;
-      toolInfo.lpszText = buf;
-      SendMessageA(*phWndTip, TTM_GETTOOLINFO, 0, (LPARAM)&toolInfo);
-      strcpy(buf, lpszText);
-      SendMessageA(*phWndTip, TTM_SETTOOLINFO, 0, (LPARAM)&toolInfo);
-    }
+    if (!hWndTip) return NULL;
+    toolInfo.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+    toolInfo.lpszText = (char*)lpszText;
+    SendMessageA(hWndTip, TTM_ADDTOOL, 0, (LPARAM)&toolInfo);
+    if (phWndTip) *phWndTip = hWndTip;
   } else {
-    *phWndTip = CreateToolTip(hDlg, ctrlID, lpszText);
+    hWndTip = *phWndTip;
+    SendMessageA(hWndTip, TTM_GETTOOLINFO, 0, (LPARAM)&toolInfo);
+    toolInfo.lpszText = (char*)lpszText;
+    SendMessageA(hWndTip, TTM_SETTOOLINFO, 0, (LPARAM)&toolInfo);
   }
-  return *phWndTip;
+  return hWndTip;
 }
 
 static int AddTabs(unsigned int c) {
@@ -125,7 +96,7 @@ static char CountTabs(void) {
       BYTE* pView = (BYTE*)MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0);
       if (pView) {
         MEMORY_BASIC_INFORMATION memBI;
-        memset(&memBI, 0, sizeof(memBI));
+        __stosb(&memBI, 0, sizeof(memBI));
         if (VirtualQuery((void*)pView, &memBI, sizeof(memBI))) {
           BYTE* p = pView;
           while (p < pView+memBI.RegionSize) {
@@ -146,7 +117,7 @@ static void ShowStashPath(void) {
   char *p = g_path, *p2 = g_path;
   while (*++p) if (*p == '\\') p2 = p;
   SendMessageA(GetDlgItem(g_hDlg, IDC_TEXT1), WM_SETTEXT, 0, (LPARAM)p2);
-  SetToolTip(g_hDlg, IDC_TEXT1, &g_hTip1, g_path);
+  SetToolTip(g_hDlg, IDC_TEXT1, g_path, &g_hTip1);
 }
 
 static void ShowTabCount() {
@@ -210,7 +181,7 @@ long __stdcall DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
       SendMessageA(GetDlgItem(hDlg, IDC_SPIN1), UDM_SETRANGE, 0, MAKELPARAM(0,0)); // MAKELPARAM(7,CUR)
       SendMessageA(GetDlgItem(hDlg, IDC_SPIN1), UDM_SETPOS, 0, 0);
       SendMessageA(GetDlgItem(hDlg, IDC_TEXT2), WM_SETTEXT, 0, (LPARAM)"?");
-      CreateToolTip(hDlg, IDC_TEXT2, szTip1);
+      SetToolTip(hDlg, IDC_TEXT2, "Amount of shared stash tabs", NULL);
       oWndProc = (WNDPROC)SetWindowLongA(GetDlgItem(hDlg, IDC_TEXT1), GWL_WNDPROC, (LONG)WndProc);
       oWndProc2 = (WNDPROC)SetWindowLongA(GetDlgItem(hDlg, IDC_SPIN1), GWL_WNDPROC, (LONG)WndProc2);
       if (g_path[0]) {
